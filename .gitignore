@@ -13,3 +13,4 @@ deploy/.env
 *.log
 .DS_Store
 蔚来ES6预定选配-NIO蔚来官网_files/
+.@__thumb/
