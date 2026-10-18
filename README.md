@@ -1,15 +1,15 @@
-<h1 align="center">NIO-Dash</h1>
+<h1 align="center">NIO-Dash · NAS</h1>
 
 <p align="center">
-  蔚来车辆看板 — 原生常驻 macOS 菜单栏，在一个本地应用里查看车况、电量、行程、家充与换电记录。
+  蔚来车辆看板 — <b>NAS / 服务器常驻版</b>：24 小时采集，浏览器里看车况、电量、行程、家充与换电记录，不需要 Mac 开着。
 </p>
 
 <p align="center">
-  <a href="https://github.com/real3841/nio-dash-v2/releases/latest"><b>下载最新版</b></a>
+  <a href="deploy/NAS.md"><b>NAS 部署指南</b></a>
+  &nbsp;·&nbsp;
+  <a href="https://github.com/real3841/nio-dash-v2"><b>桌面版仓库</b></a>
   &nbsp;·&nbsp;
   <a href="#功能概览"><b>功能概览</b></a>
-  &nbsp;·&nbsp;
-  <a href="#开发运行"><b>自行构建</b></a>
 </p>
 
 <p align="center">
