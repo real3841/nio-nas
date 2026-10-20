@@ -10,6 +10,8 @@
     "dev": "vite",
     "build": "vite build",
     "typecheck": "tsc --noEmit",
+    "test": "node --import tsx --test \"src/**/*.test.ts\" \"scripts/**/*.test.ts\"",
+    "backup": "tsx scripts/backup.ts",
     "preview": "vite preview",
     "fetch": "npm run fetch:vehicle && npm run fetch:change && npm run postfetch",
     "fetch:vehicle": "tsx scripts/fetch-vehicle.ts",
@@ -51,6 +53,7 @@
     "electron": "^35.1.5",
     "electron-builder": "~24.13.3",
     "esbuild": "^0.25.4",
+    "gifenc": "^1.0.3",
     "tsx": "^4.19.4",
     "typescript": "^5.8.3",
     "vite": "^6.3.5"

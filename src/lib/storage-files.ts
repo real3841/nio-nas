@@ -1,4 +1,13 @@
-export type StorageFileKind = "config" | "data";
+export type StorageFileKind = "config" | "data" | "tracks";
+
+export interface StorageSummary {
+  data: { bytes: number; count: number };
+  config: { bytes: number; count: number };
+  tracks: { bytes: number; count: number };
+  backups: { bytes: number; count: number };
+  disk: { freeBytes: number; totalBytes: number; usedPct: number };
+  warnings: string[];
+}
 
 export interface StorageFileEntry {
   id: string;
@@ -15,7 +24,9 @@ export interface StorageFilesResponse {
   dataDir: string;
   userDataDir: string;
   envFile: string;
+  backupDir: string;
   files: StorageFileEntry[];
+  summary: StorageSummary;
   error?: string;
 }
 

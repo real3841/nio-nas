@@ -65,6 +65,8 @@ import { placeLabel, tripTimeMs, type DailyFile, type JourneyFile } from "../lib
 import { formatDurationSec, NIO_SITE_CERT, NIO_SITE_CERT_NOT_AFTER, workStateLabel, type PowerFile } from "../lib/power";
 import { localDayKey } from "../lib/date-utils";
 import { useCardLayout } from "../hooks/useCardLayout";
+import { useTrackFallback } from "../hooks/useTrackFallback";
+import { describeTrip } from "../lib/track-derived";
 import { SortableCardGrid, type CardControls } from "./SortableCardGrid";
 import { CardRvsModal } from "./CardRvsModal";
 import type { UiLook } from "../lib/ui-look";
@@ -209,6 +211,7 @@ export const DashboardCards = memo(function DashboardCards({
 }: Props) {
   const monthKeyNow = localDayKey().slice(0, 7);
   const [layout, updateLayout] = useCardLayout("vehicle", VEHICLE_CARDS);
+  const trackFallback = useTrackFallback();
   const [rvsModal, setRvsModal] = useState<{ title: string; payload: Record<string, unknown> } | null>(null);
   const [certOpen, setCertOpen] = useState(false);
   const [boardTab, setBoardTab] = useState<BoardTab>("all");
@@ -874,22 +877,40 @@ export const DashboardCards = memo(function DashboardCards({
           </DashCard>
         );
 
-      case "daily_mileage":
+      case "daily_mileage": {
+        // 签名接口挂了就用本地轨迹兜底：轨迹里有每趟公里数，够算今天
+        const derived = !daily || Boolean(daily.error);
+        const todayKm = derived ? trackFallback.todayKm : daily?.daily_mileage ?? null;
         return (
           <DashCard icon={<IconCar />} title="当日里程" {...chrome}>
-            {daily?.error && <p className="nas-error">{daily.error}</p>}
             <BlockRows
               rows={[
                 {
                   label: "今天",
-                  value: daily?.daily_mileage != null ? `${Math.round(daily.daily_mileage * 10) / 10} km` : "—",
+                  value:
+                    trackFallback.loading && derived ? "读取轨迹…" : todayKm != null ? `${Math.round(todayKm * 10) / 10} km` : "—",
                 },
-                { label: "累计", value: daily?.mileage != null ? `${daily.mileage.toLocaleString()} km` : "—" },
-                { label: "激活", value: daily?.activate_days != null ? `${daily.activate_days} 天` : "—" },
+                {
+                  label: "累计",
+                  value:
+                    daily?.mileage != null
+                      ? `${daily.mileage.toLocaleString()} km`
+                      : `${s.exterior_status.mileage.toLocaleString()} km`,
+                },
+                {
+                  label: "签到",
+                  value: checkin?.continuous_days != null ? `${checkin.continuous_days} 天` : daily?.activate_days != null ? `${daily.activate_days} 天` : "—",
+                },
               ]}
             />
+            {derived && trackFallback.todayCount > 0 && (
+              <p className="muted card-empty-hint">
+                签名接口不可用，里程来自本地轨迹（今天 {trackFallback.todayCount} 趟）
+              </p>
+            )}
           </DashCard>
         );
+      }
 
       case "recent_journey": {
         const trip = journey?.journey;
@@ -904,8 +925,26 @@ export const DashboardCards = memo(function DashboardCards({
             }
             {...chrome}
           >
-            {journey?.error && <p className="nas-error">{journey.error}</p>}
-            {!trip && !journey?.error && <EmptyHint />}
+            {journey?.error && !trackFallback.lastTrip && <p className="nas-error">{journey.error}</p>}
+            {!trip && trackFallback.lastTrip && (
+              <BlockRows
+                rows={[
+                  {
+                    label: "时间",
+                    value: (() => {
+                      const trip = describeTrip(trackFallback.lastTrip!);
+                      return `${fmtTime(trip.start * 1000)} – ${fmtTime(trip.end * 1000)}`;
+                    })(),
+                  },
+                  { label: "里程", value: `${describeTrip(trackFallback.lastTrip).km} km` },
+                  { label: "用时", value: `${describeTrip(trackFallback.lastTrip).minutes} 分钟` },
+                ]}
+              />
+            )}
+            {!trip && trackFallback.lastTrip && (
+              <p className="muted card-empty-hint">签名接口不可用，来自本地轨迹</p>
+            )}
+            {!trip && !journey?.error && !trackFallback.lastTrip && <EmptyHint />}
             {trip && (
               <BlockRows
                 rows={[

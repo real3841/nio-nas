@@ -270,3 +270,30 @@ export function applySlotAuth(input: { slot?: string; url?: string; token?: stri
 
   return { ok: true, tokenUpdated: Boolean(token), updated, power: null, warnings };
 }
+
+/**
+ * NAS 一步式：只贴 Bearer。写三个 Token 并把车况切到免签名的 widget 网关，不动任何地址。
+ * 三个签名槽位（status/journey/daily）在 Web 上已隐藏，这里也不会尝试修它们。
+ */
+export function applyBareToken(raw: string): QuickAuthResult {
+  const token = tokenFromText(raw ?? "");
+  if (!token) {
+    return {
+      ok: false,
+      tokenUpdated: false,
+      updated: [],
+      power: null,
+      warnings: ["没认出 Bearer：整段贴进来即可，带不带 Bearer 前缀都行"],
+    };
+  }
+
+  const updates: Record<string, string> = { NIO_VEHICLE_API_MODE: "widget" };
+  for (const key of TOKEN_KEYS) updates[key] = token;
+  const current = parseEnvFile(readEnvFileRaw());
+  if (current.NIO_CHECKIN_ACCESS_TOKEN?.trim()) updates.NIO_CHECKIN_ACCESS_TOKEN = token;
+
+  saveEnvSection(updates);
+  loadEnv({ path: getEnvFilePath(), override: true });
+
+  return { ok: true, tokenUpdated: true, updated: [], power: null, warnings: [] };
+}

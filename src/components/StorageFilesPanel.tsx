@@ -5,13 +5,60 @@ import {
   formatFileSize,
   type StorageFileEntry,
   type StorageFilesResponse,
+  type StorageSummary,
 } from "../lib/storage-files";
 
-function groupFiles(files: StorageFileEntry[]): { config: StorageFileEntry[]; data: StorageFileEntry[] } {
+function groupFiles(files: StorageFileEntry[]): {
+  config: StorageFileEntry[];
+  data: StorageFileEntry[];
+  tracks: StorageFileEntry[];
+} {
   return {
     config: files.filter((f) => f.kind === "config"),
     data: files.filter((f) => f.kind === "data"),
+    tracks: files.filter((f) => f.kind === "tracks"),
   };
+}
+
+function SummaryBar({ summary, backupDir }: { summary: StorageSummary; backupDir: string }) {
+  const gb = (bytes: number) => `${(bytes / 1024 ** 3).toFixed(1)} GB`;
+  return (
+    <div className="storage-summary">
+      <div className="storage-summary-cells">
+        <div>
+          <span className="muted">数据</span>
+          <strong>{formatFileSize(summary.data.bytes)}</strong>
+        </div>
+        <div>
+          <span className="muted">轨迹</span>
+          <strong>{formatFileSize(summary.tracks.bytes)}</strong>
+        </div>
+        <div>
+          <span className="muted">备份</span>
+          <strong>
+            {formatFileSize(summary.backups.bytes)}
+            <small> · {summary.backups.count} 份</small>
+          </strong>
+        </div>
+        <div>
+          <span className="muted">磁盘剩余</span>
+          <strong className={summary.disk.freeBytes < 2 * 1024 ** 3 ? "storage-warn" : undefined}>
+            {gb(summary.disk.freeBytes)}
+          </strong>
+        </div>
+      </div>
+      {summary.warnings.length > 0 && (
+        <ul className="storage-warnings">
+          {summary.warnings.map((warning) => (
+            <li key={warning}>{warning}</li>
+          ))}
+        </ul>
+      )}
+      <p className="muted storage-files-dirs">
+        备份目录：<code>{backupDir}</code>
+      </p>
+    </div>
+  );
 }
 
 function FileRow({ file }: { file: StorageFileEntry }) {
@@ -97,6 +144,7 @@ export function StorageFilesPanel({
 
       {groups && (
         <div className="storage-files-body">
+          <SummaryBar summary={snapshot!.summary} backupDir={snapshot!.backupDir} />
           <p className="muted storage-files-dirs">
             应用目录：<code>{snapshot!.userDataDir}</code>
             {" · "}
@@ -116,6 +164,15 @@ export function StorageFilesPanel({
               <FileRow key={file.path} file={file} />
             ))}
           </div>
+
+          {groups.tracks.length > 0 && (
+            <div className="storage-files-group">
+              <h4 className="storage-files-group-title">历史轨迹（{groups.tracks.length} 个文件）</h4>
+              {groups.tracks.map((file) => (
+                <FileRow key={file.path} file={file} />
+              ))}
+            </div>
+          )}
         </div>
       )}
     </>

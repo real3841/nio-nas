@@ -16,8 +16,13 @@ import {
 import { getChangePollIntervalSec, getVehiclePollInfo, getVehiclePollIntervalSec } from "./poll-interval.js";
 import { appendFetchLog, getFetchLogSnapshot } from "./fetch-log.js";
 import { authSlotSnapshot } from "./auth-slots.js";
-import { applyQuickAuth, applySlotAuth } from "./quick-auth.js";
+import { applyBareToken, applyQuickAuth, applySlotAuth } from "./quick-auth.js";
+import { handleTokenUpdateRequest } from "./token-api.js";
+import { dispatchAlert, type AlertEvent } from "./alerts.js";
+import { buildHealthView, describeSyncHealth, readSyncHealth } from "./sync-health.js";
+import { buildAnalytics } from "./analytics-data.js";
 import { amapReverseGeocode, isAmapGeocodeConfigured } from "./amap-geocode.js";
+import { handleBackupRequest, startDailyBackupScheduler } from "./backup-api.js";
 import { getStorageFilesSnapshot } from "./storage-files.js";
 import { handleStockWatchRequest, setStockWatchSchedulerHooks } from "./stock-watch-api.js";
 import { startStockWatchScheduler } from "./stock-watch.js";
@@ -103,6 +108,30 @@ export async function startAppServer(opts: AppServerOptions): Promise<AppServerH
     ? startDailyCheckinScheduler(notify)
     : null;
 
+  const backupOpts = {
+    backupDir: process.env.NIO_BACKUP_DIR || "/workspace/nio-backup",
+    dataDir: opts.dataDir,
+    envFile: opts.envFile,
+  };
+  const alertsStateFile = path.join(opts.dataDir, "alerts-state.json");
+  const sendAlert = (event: AlertEvent, level: "info" | "warn" | "error", title: string, message: string) =>
+    dispatchAlert(
+      { event, level, title, message },
+      {
+        webhookUrl: process.env.NIO_ALERT_WEBHOOK_URL,
+        wecomUrl: process.env.NIO_ALERT_WECOM_URL,
+        stateFile: alertsStateFile,
+        log: (lvl, msg) => appendFetchLog("system", lvl, msg),
+      },
+    );
+
+  const backupScheduler = opts.enableScheduler
+    ? startDailyBackupScheduler(backupOpts, (err) => {
+        console.error("[backup] 定时备份失败:", err.message);
+        void sendAlert("backup_failed", "error", "备份失败", `定时备份没有完成：${err.message}`);
+      })
+    : null;
+
   const stockWatchScheduler = opts.enableScheduler
     ? startStockWatchScheduler({ onComplete: notify })
     : null;
@@ -114,6 +143,17 @@ export async function startAppServer(opts: AppServerOptions): Promise<AppServerH
     setOnVehicleFetchComplete(() => {
       notify();
       void runCheckinIfDue();
+      const health = readSyncHealth(opts.dataDir);
+      if (health.reason === "failures" || health.reason === "stale") {
+        const text = describeSyncHealth(health);
+        const authLike = /sign|auth|token|401|403|登录|签名/i.test(`${health.lastError ?? ""}`);
+        void sendAlert(
+          authLike ? "token_invalid" : "sync_failed",
+          "error",
+          authLike ? "车辆 Token 可能失效" : "车辆同步异常",
+          text,
+        );
+      }
     });
     setOnChangeFetchComplete(notify);
   }
@@ -145,6 +185,10 @@ export async function startAppServer(opts: AppServerOptions): Promise<AppServerH
         return;
       }
 
+      if (await handleBackupRequest(req, res, pathname, method, backupOpts)) {
+        return;
+      }
+
       if (await handleStockWatchRequest(req, res, pathname, method)) {
         return;
       }
@@ -156,6 +200,67 @@ export async function startAppServer(opts: AppServerOptions): Promise<AppServerH
       if (pathname === "/api/auth-slots" && method === "GET") {
         noCache(res);
         json(res, 200, { ok: true, slots: authSlotSnapshot() });
+        return;
+      }
+
+      if (pathname === "/api/sync-health" && method === "GET") {
+        noCache(res);
+        const health = readSyncHealth(opts.dataDir);
+        json(
+          res,
+          200,
+          buildHealthView({
+            health,
+            detail: describeSyncHealth(health),
+            poll: getVehiclePollInfo(process.env as Record<string, string>, opts.dataDir),
+            slots: authSlotSnapshot(),
+          }),
+        );
+        return;
+      }
+
+      if (pathname === "/api/analytics" && method === "GET") {
+        noCache(res);
+        json(res, 200, buildAnalytics(opts.dataDir));
+        return;
+      }
+
+      if (pathname === "/api/alerts/status" && method === "GET") {
+        noCache(res);
+        json(res, 200, {
+          ok: true,
+          configured: {
+            webhook: Boolean(process.env.NIO_ALERT_WEBHOOK_URL?.trim()),
+            wecom: Boolean(process.env.NIO_ALERT_WECOM_URL?.trim()),
+          },
+        });
+        return;
+      }
+
+      if (pathname === "/api/alerts/test" && method === "POST") {
+        noCache(res);
+        const result = await sendAlert(
+          "test",
+          "info",
+          "测试告警",
+          `这是一条来自蔚来看板的测试消息 · ${new Date().toLocaleString("zh-CN")}`,
+        );
+        json(res, 200, { ok: result.errors.length === 0, result });
+        return;
+      }
+
+      if (pathname === "/api/token/update" && method === "POST") {
+        noCache(res);
+        await handleTokenUpdateRequest(req, res, {
+          update: (token) => {
+            const result = applyBareToken(token);
+            return { ok: result.ok, warnings: result.warnings };
+          },
+          trigger: (target) => triggerFetch(target),
+          slots: () => authSlotSnapshot(),
+        });
+        scheduler?.rescheduleChange(false);
+        notify();
         return;
       }
 
@@ -380,6 +485,7 @@ export async function startAppServer(opts: AppServerOptions): Promise<AppServerH
         scheduler?.stop();
         checkinScheduler?.stop();
         stockWatchScheduler?.stop();
+        backupScheduler?.stop();
         server.close((err) => (err ? reject(err) : resolve()));
       }),
     reschedule: () => scheduler?.reschedule(),

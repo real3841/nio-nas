@@ -13,6 +13,7 @@
  *   tracks-index.json       { generatedAt, months: [...], totalTrips, totalKm, totalPoints }
  */
 import fs from "node:fs";
+import { ensureTracksIndex } from "./tracks-integrity.js";
 import path from "node:path";
 import { config as loadEnv } from "dotenv";
 
@@ -246,35 +247,9 @@ async function fetchMonth(month: string, lastMonth = ""): Promise<{ lastMonth: s
 }
 
 function rebuildIndex(): void {
-  const files = fs
-    .readdirSync(OUT_DIR)
-    .filter((name) => /^tracks-\d{4}-\d{2}\.json$/.test(name))
-    .sort();
-
-  const months = files.map((name) => {
-    const data = JSON.parse(fs.readFileSync(path.join(OUT_DIR, name), "utf8")) as {
-      month: string;
-      trips: { k?: number; p?: unknown[] }[];
-    };
-    return {
-      month: data.month,
-      trips: data.trips.length,
-      km: Math.round(data.trips.reduce((sum, t) => sum + (t.k ?? 0), 0) * 10) / 10,
-      points: data.trips.reduce((sum, t) => sum + (t.p?.length ?? 0), 0),
-    };
-  });
-
-  const index = {
-    generatedAt: new Date().toISOString(),
-    months,
-    totalTrips: months.reduce((sum, m) => sum + m.trips, 0),
-    totalKm: Math.round(months.reduce((sum, m) => sum + m.km, 0) * 10) / 10,
-    totalPoints: months.reduce((sum, m) => sum + m.points, 0),
-  };
-
-  fs.writeFileSync(path.join(OUT_DIR, "tracks-index.json"), JSON.stringify(index));
+  const report = ensureTracksIndex(OUT_DIR, { force: true });
   console.log(
-    `索引已更新：${months.length} 个月 · ${index.totalTrips} 趟 · ${index.totalKm} km · ${index.totalPoints} 点`,
+    `索引已更新：${report.months.length} 个月 · ${report.totals.trips} 趟 · ${report.totals.km} km · ${report.totals.points} 点`,
   );
 }
 

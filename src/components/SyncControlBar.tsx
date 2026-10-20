@@ -2,6 +2,9 @@ import { useState } from "react";
 import type { ApiConfigStatus } from "../lib/api-status";
 import type { FetchMeta } from "../lib/storage";
 import { ApiStatusBadge } from "./ApiStatusBadge";
+import { AlertsPanel } from "./AlertsPanel";
+import { HealthPanel } from "./HealthPanel";
+import { BackupPanel } from "./BackupPanel";
 import { CardLayoutSettings } from "./CardLayoutSettings";
 import { MapApiSettingsPanel } from "./MapApiSettingsPanel";
 import { QuickAuthPanel } from "./QuickAuthPanel";
@@ -21,6 +24,9 @@ import {
 } from "../lib/vehicle-photos";
 
 export type SyncPanelId =
+  | "backup"
+  | "alerts"
+  | "health"
   | "files"
   | "tray"
   | "cards"
@@ -103,6 +109,27 @@ export function SyncControlBar({
             onClick={() => toggle("map")}
           >
             地图 API
+          </button>
+          <button
+            type="button"
+            className={`sync-hub-chip sync-hub-action${activePanel === "backup" ? " active" : ""}`}
+            onClick={() => toggle("backup")}
+          >
+            备份
+          </button>
+          <button
+            type="button"
+            className={`sync-hub-chip sync-hub-action${activePanel === "alerts" ? " active" : ""}`}
+            onClick={() => toggle("alerts")}
+          >
+            告警
+          </button>
+          <button
+            type="button"
+            className={`sync-hub-chip sync-hub-action${activePanel === "health" ? " active" : ""}`}
+            onClick={() => toggle("health")}
+          >
+            健康
           </button>
         </div>
 
@@ -213,6 +240,9 @@ export function SyncControlBar({
       {activePanel === "quick" && <QuickAuthPanel onDone={onQuickAuthDone} />}
       {activePanel === "log" && <SyncRuntimeLogPanel />}
       {activePanel === "map" && <MapApiSettingsPanel onSaved={onMapSaved} />}
+      {activePanel === "backup" && <BackupPanel />}
+      {activePanel === "alerts" && <AlertsPanel />}
+      {activePanel === "health" && <HealthPanel onOpenToken={() => toggle("quick")} />}
       {activePanel === "files" && (
         <StorageFilesPanel
           embedded

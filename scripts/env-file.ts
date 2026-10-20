@@ -18,7 +18,11 @@ export function readEnvFileRaw(): string {
 export function writeEnvFileRaw(content: string): void {
   const file = getEnvFilePath();
   fs.mkdirSync(path.dirname(file), { recursive: true });
-  fs.writeFileSync(file, content, "utf8");
+  // 先写同目录临时文件再 rename：进程被杀不会留下半截 .env；权限固定 600。
+  const tmp = `${file}.tmp-${process.pid}`;
+  fs.writeFileSync(tmp, content, { encoding: "utf8", mode: 0o600 });
+  fs.chmodSync(tmp, 0o600);
+  fs.renameSync(tmp, file);
 }
 
 export function parseEnvValue(raw: string): string {
@@ -120,6 +124,8 @@ export const GENERAL_ENV_KEYS = ["NIO_POLL_INTERVAL", "WEB_PORT", "NIO_TRAY_DISP
 
 export const TRAY_ENV_KEYS = ["NIO_TRAY_DISPLAY"] as const;
 
+export const ALERT_ENV_KEYS = ["NIO_ALERT_WEBHOOK_URL", "NIO_ALERT_WECOM_URL"] as const;
+
 export const MAP_ENV_KEYS = [
   "NIO_AMAP_WEB_SERVICE_KEY",
   "NIO_AMAP_JS_KEY",
@@ -144,6 +150,7 @@ export function loadEnvSections(): {
   change: ChangeEnv;
   general: GeneralEnv;
   map: MapEnv;
+  alerts: Record<(typeof ALERT_ENV_KEYS)[number], string>;
 } {
   const all = parseEnvFile(readEnvFileRaw());
   return {
@@ -151,6 +158,7 @@ export function loadEnvSections(): {
     change: pickKeys(all, CHANGE_ENV_KEYS) as ChangeEnv,
     general: pickKeys(all, GENERAL_ENV_KEYS) as GeneralEnv,
     map: pickKeys(all, MAP_ENV_KEYS) as MapEnv,
+    alerts: pickKeys(all, ALERT_ENV_KEYS) as Record<(typeof ALERT_ENV_KEYS)[number], string>,
   };
 }
 

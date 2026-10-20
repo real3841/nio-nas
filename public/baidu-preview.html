@@ -1,0 +1,250 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+    <title>百度静态图 × 点云 · 对照</title>
+    <style>
+      :root {
+        color-scheme: dark;
+        --bg: #0b0d12;
+        --card: #14171f;
+        --stroke: rgba(255, 255, 255, 0.12);
+        --text: #e8ecf4;
+        --muted: #8b93a3;
+        --accent: #3b82f6;
+      }
+      * { box-sizing: border-box; }
+      html, body { margin: 0; height: 100%; background: var(--bg); color: var(--text); font: 13px/1.5 -apple-system, "PingFang SC", "Microsoft YaHei", system-ui, sans-serif; }
+      body { display: flex; flex-direction: column; }
+      header { display: flex; align-items: center; gap: 10px; padding: 10px 14px; border-bottom: 1px solid var(--stroke); background: var(--card); flex-wrap: wrap; }
+      h1 { margin: 0; font-size: 14px; font-weight: 600; }
+      .sp { margin-left: auto; }
+      button, select { height: 28px; padding: 0 10px; border-radius: 8px; border: 1px solid var(--stroke); background: #1c2029; color: var(--text); font-size: 12px; cursor: pointer; }
+      button:hover { border-color: rgba(255, 255, 255, 0.28); }
+      .hint { color: var(--muted); font-size: 11px; }
+      main { position: relative; flex: 1; min-height: 0; }
+      canvas { display: block; width: 100%; height: 100%; }
+      .status { position: absolute; inset: 0; display: grid; place-items: center; color: var(--muted); font-size: 12px; pointer-events: none; }
+      .legend { position: absolute; left: 12px; bottom: 12px; padding: 6px 10px; border-radius: 8px; background: rgba(10, 12, 18, 0.72); border: 1px solid var(--stroke); color: #cbd5e1; font-size: 11px; backdrop-filter: blur(6px); }
+      .legend i { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #ff5ec8; box-shadow: 0 0 8px #ff5ec8; margin-right: 6px; vertical-align: 0; }
+    </style>
+  </head>
+  <body>
+    <header>
+      <h1>百度静态图 × 点云</h1>
+      <button id="prev" type="button">‹ 上一月</button>
+      <select id="month" aria-label="月份"></select>
+      <button id="next" type="button">下一月 ›</button>
+      <button id="reload" type="button">重取底图</button>
+      <span class="sp"></span>
+      <span class="hint" id="meta"></span>
+    </header>
+    <main>
+      <canvas id="map"></canvas>
+      <div class="status" id="status">加载中…</div>
+      <div class="legend"><i></i>深色 = 停车/到访更频繁 · 颜色越亮 = 轨迹密度越高</div>
+    </main>
+    <script>
+      const X_PI = (Math.PI * 3000) / 180;
+      const COLORS = ["#ff5ec8", "#ff5ec8"];
+
+      function gcjToBd09(lng, lat) {
+        const x = lng, y = lat;
+        const z = Math.sqrt(x * x + y * y) + 0.00002 * Math.sin(y * X_PI);
+        const theta = Math.atan2(y, x) + 0.000003 * Math.cos(x * X_PI);
+        return [z * Math.cos(theta) + 0.0065, z * Math.sin(theta) + 0.006];
+      }
+
+      const LLBAND = [75, 60, 45, 30, 15, 0];
+      const LL2MC = [
+        [-0.0015702102444, 111320.7020616939, 1704480524535203, -10338987376042340, 26112667856603880, -35149669176653700, 26595700718403920, -10725012454188240, 1800819912950474, 82.5],
+        [0.0008277824516172526, 111320.7020463578, 647795574.6671607, -4082003173.641316, 10774905663.51142, -15171875531.51559, 12053065338.62167, -5124939663.577472, 913311935.9512032, 67.5],
+        [0.00337398766765, 111320.7020202162, 4481351.045890365, -23393751.19931662, 79682215.47186455, -115964993.2797253, 97236711.15602145, -43661946.33752821, 8477230.501135234, 52.5],
+        [0.00220636496208, 111320.7020209128, 51751.86112841131, 3796837.749470245, 992013.7397791013, -1221952.21711287, 1340652.697009075, -620943.6990984312, 144416.9293806241, 37.5],
+        [-0.0003441963504368392, 111320.7020576856, 278.2353980772752, 2485758.690035394, 6070.750963243378, 54821.18345352118, 9540.606633304236, -2710.55326746645, 1405.483844121726, 22.5],
+        [-0.0003218135878613132, 111320.7020701615, 0.00369383431289, 823725.6402795718, 0.46104986909093, 2351.343141331292, 1.58060784298199, 8.77738589078284, 0.37238884252424, 7.45],
+      ];
+
+      function bd09ToMc(lng, lat) {
+        const absLat = Math.abs(lat);
+        let c = LL2MC[LL2MC.length - 1];
+        for (let i = 0; i < LLBAND.length; i += 1) {
+          if (absLat >= LLBAND[i]) { c = LL2MC[i]; break; }
+        }
+        const x = c[0] + c[1] * Math.abs(lng);
+        const a = absLat / c[9];
+        let y = 0;
+        for (let i = 8; i >= 2; i -= 1) y = y * a + c[i];
+        return [x, y];
+      }
+
+      function invert(fn, target, lo, hi) {
+        for (let i = 0; i < 48; i += 1) {
+          const mid = (lo + hi) / 2;
+          if (fn(mid) < target) lo = mid; else hi = mid;
+        }
+        return (lo + hi) / 2;
+      }
+
+      function mcToBd09(mx, my) {
+        const lng = invert((v) => bd09ToMc(v, 0)[0], mx, 60, 140);
+        const lat = invert((v) => bd09ToMc(0, v)[1], my, 0, 60);
+        return [lng, lat];
+      }
+
+      function sprite(color, size) {
+        const c = document.createElement("canvas");
+        c.width = c.height = size;
+        const ctx = c.getContext("2d");
+        const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2);
+        g.addColorStop(0, "#ffffff");
+        g.addColorStop(0.24, color);
+        g.addColorStop(0.6, color + "66");
+        g.addColorStop(1, color + "00");
+        ctx.fillStyle = g;
+        ctx.fillRect(0, 0, size, size);
+        return c;
+      }
+
+      const canvas = document.getElementById("map");
+      const ctx = canvas.getContext("2d");
+      const statusEl = document.getElementById("status");
+      const metaEl = document.getElementById("meta");
+      const monthSel = document.getElementById("month");
+      let index = null;
+      let current = 0;
+
+      async function loadIndex() {
+        const res = await fetch(`/data/tracks-index.json?_=${Date.now()}`);
+        index = await res.json();
+        monthSel.innerHTML = "";
+        for (const m of index.months) {
+          const opt = document.createElement("option");
+          opt.value = m.month;
+          opt.textContent = `${m.month} · ${m.trips} 趟`;
+          monthSel.append(opt);
+        }
+        current = index.months.length - 1;
+        monthSel.value = index.months[current].month;
+      }
+
+      async function render(month, cacheBust) {
+        statusEl.style.display = "grid";
+        statusEl.textContent = "取底图…";
+        const res = await fetch(`/data/tracks-${month}.json?_=${Date.now()}`);
+        const data = await res.json();
+        const trips = data.trips || [];
+        const pts = [];
+        for (const trip of trips) for (const p of trip.p) pts.push(p);
+        if (pts.length < 2) { statusEl.textContent = "这个月没有轨迹"; return; }
+
+        let minX = Infinity, maxX = -Infinity, minY = Infinity, maxY = -Infinity;
+        const projected = [];
+        for (const p of pts) {
+          const [blng, blat] = gcjToBd09(p[0], p[1]);
+          const [mx, my] = bd09ToMc(blng, blat);
+          projected.push([mx, my]);
+          if (mx < minX) minX = mx;
+          if (mx > maxX) maxX = mx;
+          if (my < minY) minY = my;
+          if (my > maxY) maxY = my;
+        }
+
+        const dpr = Math.min(2, window.devicePixelRatio || 1);
+        const cw = canvas.clientWidth;
+        const ch = canvas.clientHeight;
+        canvas.width = Math.round(cw * dpr);
+        canvas.height = Math.round(ch * dpr);
+
+        const W = Math.min(1024, Math.round(cw));
+        const H = Math.min(1024, Math.round(ch));
+        // 所有绘制都在「静态图像素空间」里做，再整体缩放到画布
+        const sx = cw / W;
+        const sy = ch / H;
+        const pad = 0.88;
+        const needRes = Math.max((maxX - minX) / (W * pad), (maxY - minY) / (H * pad));
+        let zoom = Math.floor(18 - Math.log2(needRes));
+        zoom = Math.max(3, Math.min(18, zoom));
+        const res = Math.pow(2, 18 - zoom); // 米 / 像素（BD09MC）
+
+        const cx = (minX + maxX) / 2;
+        const cy = (minY + maxY) / 2;
+        const [blng, blat] = mcToBd09(cx, cy);
+
+        const url = `https://api.map.baidu.com/staticimage?center=${blng.toFixed(6)},${blat.toFixed(6)}&zoom=${zoom}&width=${W}&height=${H}&scale=1${cacheBust ? `&t=${Date.now()}` : ""}`;
+        statusEl.textContent = "取底图…";
+        const img = new Image();
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = reject;
+          img.src = url;
+        }).catch(() => null);
+
+        ctx.setTransform(dpr * sx, 0, 0, dpr * sy, 0, 0);
+        ctx.clearRect(0, 0, W, H);
+        ctx.fillStyle = "#0b0d12";
+        ctx.fillRect(0, 0, W, H);
+
+        if (img.width) {
+          ctx.drawImage(img, 0, 0, W, H);
+        } else {
+          ctx.fillStyle = "#1c2029";
+          ctx.fillRect(0, 0, W, H);
+        }
+
+        // 点云：按屏幕像素合并，越密的点越大越亮
+        const dot = sprite("#ff5ec8", 32);
+        const cells = new Map();
+        for (const [mx, my] of projected) {
+          const x = W / 2 + (mx - cx) / res;
+          const y = H / 2 - (my - cy) / res;
+          if (x < -20 || y < -20 || x > W + 20 || y > H + 20) continue;
+          const key = `${Math.round(x / 3)}:${Math.round(y / 3)}`;
+          const cell = cells.get(key);
+          if (cell) cell.n += 1;
+          else cells.set(key, { x, y, n: 1 });
+        }
+        const step = Math.max(1, Math.ceil(cells.size / 4000));
+        let i = 0;
+        ctx.globalCompositeOperation = "lighter";
+        for (const cell of cells.values()) {
+          if (i % step !== 0) { i += 1; continue; }
+          i += 1;
+          const size = 8 + Math.min(10, Math.log2(cell.n + 1) * 2.4);
+          ctx.globalAlpha = Math.min(0.95, 0.4 + Math.log2(cell.n + 1) * 0.14);
+          ctx.drawImage(dot, cell.x - size / 2, cell.y - size / 2, size, size);
+        }
+        ctx.globalAlpha = 1;
+        ctx.globalCompositeOperation = "source-over";
+
+        statusEl.style.display = "none";
+        metaEl.textContent = `${month} · ${trips.length} 趟 · ${pts.length.toLocaleString()} 点 · zoom ${zoom} · 百度静态图 / BD-09`;
+      }
+
+      async function boot(cacheBust) {
+        if (!index) await loadIndex();
+        const month = index.months[current].month;
+        monthSel.value = month;
+        try {
+          await render(month, cacheBust);
+        } catch (err) {
+          statusEl.textContent = `失败：${err && err.message ? err.message : err}`;
+        }
+      }
+
+      document.getElementById("prev").onclick = () => { current = Math.max(0, current - 1); void boot(false); };
+      document.getElementById("next").onclick = () => { current = Math.min(index.months.length - 1, current + 1); void boot(false); };
+      document.getElementById("reload").onclick = () => void boot(true);
+      monthSel.onchange = () => { current = index.months.findIndex((m) => m.month === monthSel.value); void boot(true); };
+
+      let resizeTimer = 0;
+      window.addEventListener("resize", () => {
+        clearTimeout(resizeTimer);
+        resizeTimer = window.setTimeout(() => void boot(false), 250);
+      });
+
+      void boot(false);
+    </script>
+  </body>
+</html>

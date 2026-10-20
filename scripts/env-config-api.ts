@@ -1,6 +1,7 @@
 import type http from "node:http";
 import { config as loadEnv } from "dotenv";
 import {
+  ALERT_ENV_KEYS,
   CHANGE_ENV_KEYS,
   getEnvFilePath,
   loadEnvSections,
@@ -61,6 +62,7 @@ export async function handleConfigRequest(
     (pathname === "/config/vehicle" ||
       pathname === "/config/change" ||
       pathname === "/config/tray" ||
+      pathname === "/config/alerts" ||
       pathname === "/config/map") &&
     method === "PUT"
   ) {
@@ -74,7 +76,9 @@ export async function handleConfigRequest(
             ? CHANGE_ENV_KEYS
             : pathname === "/config/map"
               ? MAP_ENV_KEYS
-              : TRAY_ENV_KEYS;
+              : pathname === "/config/alerts"
+                ? ALERT_ENV_KEYS
+                : TRAY_ENV_KEYS;
       const updates = pickSectionUpdates(keys, body);
       if (Object.keys(updates).length === 0) {
         json(res, 400, { ok: false, error: "没有可更新的字段" });

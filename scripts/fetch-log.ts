@@ -2,6 +2,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { writeFileAtomic } from "./atomic-write.js";
 import { getFetchLogFile } from "./paths.js";
+import { pruneLogEntries } from "./log-retention.js";
 
 export type FetchLogSlot = "vehicle" | "change" | "checkin" | "stock_watch" | "system";
 export type FetchLogLevel = "info" | "success" | "error";
@@ -50,7 +51,7 @@ function loadPersistedLogs(): FetchLogEntry[] {
     if (!fs.existsSync(file)) return [];
     const parsed = JSON.parse(fs.readFileSync(file, "utf8")) as unknown;
     if (!Array.isArray(parsed)) return [];
-    return parsed.slice(-MAX_LOGS) as FetchLogEntry[];
+    return pruneLogEntries(parsed.slice(-MAX_LOGS) as FetchLogEntry[], Date.now(), 30);
   } catch {
     return [];
   }

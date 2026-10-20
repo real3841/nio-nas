@@ -13,12 +13,20 @@
  *   NIO_API_PORT   内部接口端口（默认 8789）
  *   NIO_DATA_DIR   数据目录（默认 ./data）
  *   NIO_ENV_FILE   配置文件（默认 ./deploy/.env）
+ *   NIO_DRILL=1    只当静态看板，不启动轮询/抓取（恢复演练用）
  */
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
 import { spawn, type ChildProcess } from "node:child_process";
 import { startAppServer } from "./app-server.js";
+import { buildAnnualReport, renderAnnualReportHtml } from "./annual-report.js";
+import {
+  compareIndex,
+  ensureTracksIndex,
+  scanTrackFiles,
+  type TracksIndex,
+} from "./tracks-integrity.js";
 
 const ROOT = path.resolve(process.cwd());
 const DATA_DIR = path.resolve(process.env.NIO_DATA_DIR ?? path.join(ROOT, "data"));
@@ -36,6 +44,8 @@ const MIME: Record<string, string> = {
   ".js": "text/javascript; charset=utf-8",
   ".css": "text/css; charset=utf-8",
   ".json": "application/json; charset=utf-8",
+  ".webmanifest": "application/manifest+json; charset=utf-8",
+  ".txt": "text/plain; charset=utf-8",
   ".svg": "image/svg+xml",
   ".png": "image/png",
   ".jpg": "image/jpeg",
@@ -49,7 +59,7 @@ let trackTask: ChildProcess | null = null;
 let trackLastRunAt = 0;
 let trackLastResult = "";
 
-function trackIndex(): { months: { month: string; trips: number }[]; totalTrips: number; totalKm: number } | null {
+function trackIndex(): TracksIndex | null {
   try {
     return JSON.parse(fs.readFileSync(path.join(DATA_DIR, "tracks-index.json"), "utf8"));
   } catch {
@@ -138,7 +148,8 @@ async function main(): Promise<void> {
     staticDir: STATIC_DIR,
     dataDir: DATA_DIR,
     envFile: ENV_FILE,
-    enableScheduler: true,
+    // NIO_DRILL=1 时只当静态看板，不轮询、不抓取，用来演练恢复出来的数据。
+    enableScheduler: process.env.NIO_DRILL !== "1",
   });
   console.log(`[web] 内部接口 127.0.0.1:${APP.port} · 数据目录 ${DATA_DIR}`);
 
@@ -147,7 +158,43 @@ async function main(): Promise<void> {
     const pathname = decodeURIComponent(rawUrl.split("?")[0]);
     const method = req.method ?? "GET";
 
+    // 年报（静态渲染，先用来看叙事成不成立）
+    if (pathname === "/report" && method === "GET") {
+      try {
+        const html = renderAnnualReportHtml(buildAnnualReport(DATA_DIR, new Date(), 12));
+        res.writeHead(200, { "Content-Type": "text/html; charset=utf-8", "Cache-Control": "no-store" });
+        return res.end(html);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        res.writeHead(500, { "Content-Type": "text/plain; charset=utf-8" });
+        return res.end(`年报生成失败：${message}`);
+      }
+    }
     // 轨迹接口
+    if (pathname === "/api/tracks/integrity" && method === "GET") {
+      const scanned = scanTrackFiles(DATA_DIR);
+      const check = compareIndex(trackIndex(), scanned);
+      return sendJson(res, 200, {
+        ok: true,
+        needsRebuild: check.needsRebuild,
+        reasons: check.reasons,
+        months: scanned.map(({ month, trips, km, points }) => ({ month, trips, km, points })),
+        totals: {
+          trips: scanned.reduce((sum, month) => sum + month.trips, 0),
+          km: Math.round(scanned.reduce((sum, month) => sum + month.km, 0) * 10) / 10,
+        },
+        index: trackIndex(),
+      });
+    }
+    if (pathname === "/api/tracks/rebuild-index" && method === "POST") {
+      try {
+        const report = ensureTracksIndex(DATA_DIR, { force: true });
+        console.log(`[tracks] 手动重建索引：${report.totals.trips} 趟 · ${report.totals.km} km`);
+        return sendJson(res, 200, { ok: true, rebuilt: true, totals: report.totals });
+      } catch (error) {
+        return sendJson(res, 500, { ok: false, error: error instanceof Error ? error.message : String(error) });
+      }
+    }
     if (pathname === "/api/tracks/status" && method === "GET") {
       const idx = trackIndex();
       return sendJson(res, 200, {
@@ -190,6 +237,19 @@ async function main(): Promise<void> {
   server.listen(WEB_PORT, WEB_HOST, () => {
     console.log(`[web] 看板已启动：http://${WEB_HOST}:${WEB_PORT}`);
   });
+
+  // 启动自检：月文件与索引不一致（缺月/漂移/索引过期）时自动重建
+  try {
+    const report = ensureTracksIndex(DATA_DIR);
+    if (report.rebuilt) {
+      console.log(`[tracks] 索引已重建：${report.reasons.join("；")}`);
+      console.log(`[tracks] 当前 ${report.months.length} 个月 · ${report.totals.trips} 趟 · ${report.totals.km} km`);
+    } else {
+      console.log(`[tracks] 索引自检通过：${report.months.length} 个月 · ${report.totals.trips} 趟`);
+    }
+  } catch (error) {
+    console.warn(`[tracks] 索引自检失败：${error instanceof Error ? error.message : error}`);
+  }
 
   scheduleDailyTracks();
 }

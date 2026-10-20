@@ -36,6 +36,15 @@ interface Props {
 
 const RUN_LABELS: Record<string, string> = { vehicle: "车况", change: "换电订单", checkin: "签到" };
 
+/** 这三条要桌面端抓签名，NAS 上看板不依赖它们，Web 端不再展示。 */
+const HIDDEN_SLOT_IDS = new Set(["status", "journey", "daily"]);
+
+function kindText(kind: string | null | undefined): string {
+  if (kind === "auth") return "登录失效";
+  if (kind === "sign") return "签名失效";
+  return "拉取失败";
+}
+
 const UPDATED_LABELS: Record<string, string> = {
   NIO_VEHICLE_API_URL: "车辆状态",
   NIO_VEHICLE_STATUS_URL: "车况整包",
@@ -135,11 +144,9 @@ function formatCheckedAt(at: number | null | undefined): string | null {
   });
 }
 
-const EMPTY_SLOTS: AuthSlotView[] = AUTH_SLOTS.map((slot) => ({
-  ...slot,
-  ok: null,
-  kind: null,
-}));
+const EMPTY_SLOTS: AuthSlotView[] = AUTH_SLOTS.filter((slot) => !HIDDEN_SLOT_IDS.has(slot.id)).map(
+  (slot) => ({ ...slot, ok: null, kind: null }),
+);
 
 function failureLabel(slot: AuthSlotView): string | null {
   if (slot.enabled === false || slot.ok !== false) return null;
@@ -162,13 +169,15 @@ export function QuickAuthPanel({ onDone }: Props) {
   const [busy, setBusy] = useState(false);
   const [lines, setLines] = useState<string[]>([]);
   const [error, setError] = useState<string | null>(null);
+  const [quickToken, setQuickToken] = useState("");
+  const [quickLines, setQuickLines] = useState<string[]>([]);
   const fileRef = useRef<HTMLInputElement>(null);
   const picked = useRef(false);
 
   const loadSlots = async () => {
     const res = await fetch("/api/auth-slots");
     const body = (await res.json()) as { ok?: boolean; slots?: Array<Partial<AuthSlotView> & { id: string }> };
-    const next = (body.slots ?? []).map(withDefaults);
+    const next = (body.slots ?? []).map(withDefaults).filter((slot) => !HIDDEN_SLOT_IDS.has(slot.id));
     setSlots(next);
     if (!picked.current && next.length > 0) setSelectedId(pickSlot(next));
   };
@@ -181,6 +190,45 @@ export function QuickAuthPanel({ onDone }: Props) {
   const members = selected ? membersOf(selected.id, slots) : [];
   const mark = groupMark(members);
   const firstFailed = members.find((slot) => slot.enabled !== false && failureLabel(slot));
+
+  const submitBare = async () => {
+    setBusy(true);
+    setError(null);
+    setQuickLines([]);
+    try {
+      const res = await fetch("/api/token/update", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ token: quickToken }),
+      });
+      const body = (await res.json()) as {
+        ok?: boolean;
+        error?: string;
+        runs?: Record<string, string>;
+        slots?: Array<{ id: string; ok: boolean | null; kind: string | null }>;
+      };
+      if (!res.ok || !body.ok) {
+        setError(body.error ?? `更新失败 (${res.status})`);
+        return;
+      }
+      const labels: Record<string, string> = { widget: "车况", change: "换电订单", checkin: "签到" };
+      const rows = (body.slots ?? [])
+        .filter((slot) => labels[slot.id])
+        .map((slot) =>
+          slot.ok
+            ? `${labels[slot.id]}：✅ 已恢复`
+            : `${labels[slot.id]}：❌ ${kindText(slot.kind)}（还不行就换一个 Token 再试）`,
+        );
+      setQuickLines([...rows, ...runLines(body.runs)]);
+      setQuickToken("");
+      await onDone?.();
+      await loadSlots();
+    } catch (err) {
+      setError(err instanceof Error ? err.message : "无法连接本地服务");
+    } finally {
+      setBusy(false);
+    }
+  };
 
   const submitFields = async () => {
     if (!selected) return;
@@ -277,7 +325,44 @@ export function QuickAuthPanel({ onDone }: Props) {
 
   return (
     <div className="sync-hub-panel-body quick-auth-panel">
-      <p className="muted">标黄的是失效的接口，虚线的是还没接入的。点它，把抓到的内容贴进来。</p>
+      <section className="token-quick">
+        <h3>一步更新：只贴 Bearer</h3>
+        <p className="muted">
+          车况 widget 和换电订单走免签名网关，只要 Token 有效就能恢复，不用抓地址。车况整包、最近行程、当日里程要桌面端抓签名，NAS 不使用，看板也不依赖它们。
+        </p>
+        <form
+          className="token-quick-form"
+          onSubmit={(event) => {
+            event.preventDefault();
+            void submitBare();
+          }}
+        >
+          <input
+            type="password"
+            autoComplete="off"
+            value={quickToken}
+            disabled={busy}
+            placeholder="贴 Bearer Token（带不带 Bearer 前缀都行）"
+            aria-label="Bearer Token"
+            onChange={(event) => setQuickToken(event.target.value)}
+          />
+          <button type="submit" className="btn primary" disabled={busy || !quickToken.trim()}>
+            {busy ? "更新中…" : "更新并试拉"}
+          </button>
+        </form>
+        {quickLines.length > 0 && (
+          <ul className="quick-auth-result">
+            {quickLines.map((line) => (
+              <li key={line}>{line}</li>
+            ))}
+          </ul>
+        )}
+      </section>
+
+      <details className="token-advanced">
+        <summary>高级：地址失效 / 从 HAR 恢复</summary>
+        <p className="muted">标黄的是失效的接口，虚线的是还没接入的。点它，把抓到的内容贴进来。</p>
+      </details>
       <div className="auth-slot-list" role="tablist" aria-label="要更新的接口">
         {slots
           .filter((slot) => !GROUPED_IDS.has(slot.id))
@@ -377,8 +462,8 @@ export function QuickAuthPanel({ onDone }: Props) {
             <button type="submit" className="btn primary" disabled={busy || (!url.trim() && !token.trim())}>
               {busy ? "更新中…" : "更新并刷新"}
             </button>
-            <button type="button" className="btn ghost" disabled={busy} onClick={() => fileRef.current?.click()}>
-              选择 HAR 文件
+            <button type="button" className="btn ghost btn-small" disabled={busy} onClick={() => fileRef.current?.click()}>
+              从 HAR 文件恢复
             </button>
             {fileName && <span className="muted">{fileName}</span>}
           </div>

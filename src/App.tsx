@@ -2,20 +2,24 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import pkg from "../package.json";
 import { ApiSettings, type SyncTarget } from "./components/ApiSettings";
 import { DashboardCards } from "./components/DashboardCards";
+import { AttentionCard } from "./components/AttentionCard";
+import { MonthlyLedgerCard } from "./components/MonthlyLedgerCard";
 import { VehicleHero, type HeroAction } from "./components/VehicleHero";
+import { TracksPage } from "./pages/TracksPage";
 import type { SyncPanelId } from "./components/SyncControlBar";
 import { SwapHistory } from "./components/SwapHistory";
 import { TrendCharts } from "./components/TrendCharts";
 import { fetchEnvConfig } from "./lib/env-config";
+import { mapCoordsFromGcj02 } from "./lib/gcj02";
 import type { ChangeResponse } from "./lib/change";
 import type { CheckinData } from "./lib/checkin";
 import type { DailyFile, DailyHistory, JourneyFile, JourneyHistoryItem } from "./lib/trip";
 import type { PowerFile } from "./lib/power";
 import { saveDrawerOpen, TREND_DRAWER_KEY } from "./lib/drawer-state";
 import { reverseGeocodeCached } from "./lib/geocode-cache";
-import { mapCoordsFromGcj02 } from "./lib/gcj02";
 import { hydrateCardLayout } from "./lib/card-layout";
 import { applyUiLook, readUiLook, type UiLook } from "./lib/ui-look";
+import { syncHealthDetail, syncHealthText, type SyncHealthView } from "./lib/sync-health";
 import {
   DEFAULT_CHANGE_POLL_SEC,
   formatPollSummary,
@@ -73,7 +77,8 @@ import {
   useNativeEventsInsteadOfPolling,
 } from "./platform/native-events";
 import { initialNativeRoute, onNativeNavigate } from "./platform/routes";
-import { PathPanel } from "./components/PathPanel";
+import { TracksTeaser } from "./components/TracksTeaser";
+import { AnalyticsPanel } from "./components/AnalyticsPanel";
 
 const VISIBILITY_API_MIN_MS = 5 * 60 * 1000;
 const FETCH_META_STALE_MS = 90 * 1000;
@@ -118,14 +123,18 @@ export default function App() {
   const [checkinData, setCheckinData] = useState<CheckinData | null>(null);
   const [journeyData, setJourneyData] = useState<JourneyFile | null>(null);
   const [dailyData, setDailyData] = useState<DailyFile | null>(null);
-  const [journeyHistory, setJourneyHistory] = useState<JourneyHistoryItem[]>([]);
+  const [, setJourneyHistory] = useState<JourneyHistoryItem[]>([]);
   const [dailyHistory, setDailyHistory] = useState<DailyHistory>({});
   const [powerData, setPowerData] = useState<PowerFile | null>(null);
   const [checkinMeta, setCheckinMeta] = useState<FetchMeta | null>(null);
   const [uiLook, setUiLook] = useState<UiLook>(() => readUiLook());
+  const [page, setPage] = useState<"board" | "tracks">(() =>
+    typeof location !== "undefined" && location.hash.startsWith("#/tracks") ? "tracks" : "board",
+  );
   const [showSettings, setShowSettings] = useState(
     () => new URLSearchParams(window.location.search).get("setup") === "1" || firstRoute?.startsWith("settings/") === true,
   );
+  const [syncHealth, setSyncHealth] = useState<SyncHealthView | null>(null);
   const [settingsPanel, setSettingsPanel] = useState<SyncPanelId>(
     firstRoute === "settings/token" ? "quick" : firstRoute === "settings/log" ? "log" : null,
   );
@@ -494,6 +503,19 @@ export default function App() {
     applyUiLook(uiLook);
   }, [uiLook]);
 
+  // 极简 hash 路由：只区分看板与轨迹，刷新和返回键都保留位置
+  useEffect(() => {
+    const sync = () => setPage(location.hash.startsWith("#/tracks") ? "tracks" : "board");
+    window.addEventListener("hashchange", sync);
+    return () => window.removeEventListener("hashchange", sync);
+  }, []);
+
+  const goPage = useCallback((next: "board" | "tracks") => {
+    const hash = next === "tracks" ? "#/tracks" : "#/";
+    if (location.hash !== hash) location.hash = hash;
+    setPage(next);
+  }, []);
+
   useEffect(() => {
     const onLook = (event: Event) => setUiLook((event as CustomEvent<UiLook>).detail);
     window.addEventListener("nio-ui-look", onLook);
@@ -529,6 +551,25 @@ export default function App() {
     return Boolean(state);
   }, []);
 
+  useEffect(() => {
+    let alive = true;
+    const load = async () => {
+      try {
+        const res = await fetch("/api/sync-health");
+        const body = (await res.json()) as { ok?: boolean; health?: SyncHealthView };
+        if (alive && body.ok && body.health) setSyncHealth(body.health);
+      } catch {
+        /* 服务刚重启时忽略 */
+      }
+    };
+    void load();
+    const timer = window.setInterval(load, 60_000);
+    return () => {
+      alive = false;
+      window.clearInterval(timer);
+    };
+  }, []);
+
   const loading = loadingTarget !== null;
   const vehicleStatus = data ? extractVehicleStatus(data) : null;
 
@@ -542,7 +583,7 @@ export default function App() {
             重试
           </button>
         )}
-        {showSettings && (
+      {showSettings && (
           <ApiSettings
             lastSyncVehicle={lastSyncVehicle}
             lastSyncChange={lastSyncChange}
@@ -579,8 +620,6 @@ export default function App() {
   }
 
   const s = vehicleStatus;
-  const posTs = s.position_status.sample_time || s.soc_status.sample_time;
-  const currentWgs = mapCoordsFromGcj02(s.position_status.latitude, s.position_status.longitude);
 
   const openSettings = (panel: SyncPanelId) => {
     setSettingsPanel(panel);
@@ -607,6 +646,19 @@ export default function App() {
 
   return (
     <div className="app">
+      {page === "tracks" && <TracksPage onClose={() => goPage("board")} />}
+
+      {syncHealth?.banner && (
+        <div className="sync-banner" role="status">
+          <div className="sync-banner-text">
+            <strong>{syncHealthText(syncHealth)}</strong>
+            <span>{syncHealthDetail(syncHealth)}</span>
+          </div>
+          <button type="button" className="btn primary btn-small" onClick={() => openSettings("quick")}>
+            更新 Token
+          </button>
+        </div>
+      )}
       {uiLook === "adjust" ? (
         <header className="adjust-head">
           <div className="adjust-logo" aria-hidden="true">
@@ -629,6 +681,14 @@ export default function App() {
               {changeMeta?.at ? ` · 换电 ${fmtTime(changeMeta.at)}` : ""}
             </p>
           </div>
+          <nav className="page-tabs" aria-label="页面">
+            <button type="button" className={page === "board" ? "is-on" : ""} onClick={() => goPage("board")}>
+              看板
+            </button>
+            <button type="button" className={page === "tracks" ? "is-on" : ""} onClick={() => goPage("tracks")}>
+              轨迹
+            </button>
+          </nav>
           {fetchProblems.length > 0 && (
             <button
               type="button"
@@ -684,7 +744,7 @@ export default function App() {
             )}
           </p>
           <p className="nas-hint">
-            在「数据同步」填写 Token；行驶中不论时段按行驶间隔拉取，驻车/充电等按白天/夜间；菜单栏同步显示电量
+            在「数据同步」粘贴 Bearer 更新 Token；采集按行驶 / 白天 / 夜间间隔自动进行
           </p>
           {warningVehicle && <p className="nas-error">{warningVehicle}</p>}
           {vehicleMeta && !vehicleMeta.ok && (
@@ -769,6 +829,10 @@ export default function App() {
         />
       )}
 
+      <AttentionCard status={s} syncHealth={syncHealth} />
+
+      <MonthlyLedgerCard />
+
       <DashboardCards
         data={data!}
         address={address}
@@ -783,15 +847,9 @@ export default function App() {
         pollPills={pollPills}
       />
 
-      <PathPanel
-        history={history}
-        journeys={journeyHistory}
-        current={{
-          lat: currentWgs.lat,
-          lng: currentWgs.lng,
-          ts: posTs,
-        }}
-      />
+      <AnalyticsPanel />
+
+      {page === "board" && <TracksTeaser onOpen={() => goPage("tracks")} />}
 
       {changeData && <SwapHistory data={changeData} />}
 

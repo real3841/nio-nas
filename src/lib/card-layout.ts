@@ -4,11 +4,17 @@ export interface CardDef {
   id: string;
   label: string;
   description?: string;
+  /** 默认收进「卡片管理」：首屏只留能改变行为的卡 */
+  defaultHidden?: boolean;
 }
+
+export const LAYOUT_VERSION = 2;
 
 export interface CardLayoutState {
   order: string[];
   hidden: string[];
+  /** 布局口径版本，用于一次性迁移（v1 → v2 收起次要卡片） */
+  version?: number;
 }
 
 const STORAGE_KEY = "nio_card_layout_v1";
@@ -21,43 +27,47 @@ export const VEHICLE_CARDS: CardDef[] = [
   { id: "daily_mileage", label: "当日里程", description: "今天行驶、累计里程、激活天数" },
   { id: "recent_journey", label: "最近行程", description: "最近一段行程的起终点和用时" },
   { id: "charging", label: "充电详情", description: "充电功率、电流、电压、限充" },
-  { id: "home_charger", label: "家充桩", description: "家充桩在线、枪状态、预约、上次充电" },
-  { id: "doors_visual", label: "车门", description: "车门示意、上锁状态" },
-  { id: "window", label: "车窗", description: "四窗开度、天窗、后视镜" },
-  { id: "tyre", label: "轮胎", description: "四轮胎压与胎温" },
-  { id: "software_gps", label: "软件版本 / GPS", description: "版本与位置" },
-  { id: "modes", label: "特殊模式", description: "宠物/露营/守卫/CPD 等" },
-  { id: "vehicle_info", label: "车辆信息", description: "里程、ID、状态" },
-  { id: "exterior_detail", label: "行驶 / 泊车", description: "驾驶模式、遥控泊车等" },
-  { id: "seat_heat", label: "座椅加热", description: "方向盘/座椅/通风/预热" },
-  { id: "connection", label: "连接状态", description: "签到、CDC/ADC、在线状态" },
-  { id: "stock_swap", label: "换电订单", description: "监控蔚来换电券是否有货并提醒" },
-  { id: "stock_drive", label: "驾享订单", description: "监控蔚来驾享服务券是否有货并提醒" },
-  { id: "temperature", label: "温度 / 空调", description: "车内/车外温度与空调扩展" },
-  { id: "maintain", label: "维保", description: "维保状态与待办" },
-  { id: "light", label: "灯光", description: "大灯、示宽灯、日行灯" },
-  { id: "key", label: "钥匙", description: "近车解锁、门把手感应" },
-  { id: "special", label: "特殊状态", description: "维修等特殊标记" },
-  { id: "trip_share", label: "行程分享", description: "行程分享状态" },
-  { id: "nearby_car", label: "近车控制", description: "近车授权与登录" },
-  { id: "power_swap_order", label: "换电订单", description: "换电订单展示" },
-  { id: "lv_batt", label: "低压电瓶", description: "12V 电瓶状态" },
-  { id: "device", label: "设备状态", description: "车载设备在线状态" },
-  { id: "charge_order", label: "充电订单", description: "当前充电订单" },
-  { id: "remote_operate", label: "远程操作", description: "远程操作状态" },
-  { id: "offcar_power_swap", label: "离车换电", description: "离车换电状态" },
-  { id: "box", label: "储物箱", description: "前后备箱/储物" },
-  { id: "frdg", label: "冰箱", description: "车载冰箱" },
+  { id: "home_charger", label: "家充桩", description: "家充桩在线、枪状态、预约、上次充电", defaultHidden: true },
+  { id: "doors_visual", label: "车门", description: "车门示意、上锁状态", defaultHidden: true },
+  { id: "window", label: "车窗", description: "四窗开度、天窗、后视镜", defaultHidden: true },
+  { id: "tyre", label: "轮胎", description: "四轮胎压与胎温", defaultHidden: true },
+  { id: "software_gps", label: "软件版本 / GPS", description: "版本与位置", defaultHidden: true },
+  { id: "modes", label: "特殊模式", description: "宠物/露营/守卫/CPD 等", defaultHidden: true },
+  { id: "vehicle_info", label: "车辆信息", description: "里程、ID、状态", defaultHidden: true },
+  { id: "exterior_detail", label: "行驶 / 泊车", description: "驾驶模式、遥控泊车等", defaultHidden: true },
+  { id: "seat_heat", label: "座椅加热", description: "方向盘/座椅/通风/预热", defaultHidden: true },
+  { id: "connection", label: "连接状态", description: "签到、CDC/ADC、在线状态", defaultHidden: true },
+  { id: "stock_swap", label: "换电订单", description: "监控蔚来换电券是否有货并提醒", defaultHidden: true },
+  { id: "stock_drive", label: "驾享订单", description: "监控蔚来驾享服务券是否有货并提醒", defaultHidden: true },
+  { id: "temperature", label: "温度 / 空调", description: "车内/车外温度与空调扩展", defaultHidden: true },
+  { id: "maintain", label: "维保", description: "维保状态与待办", defaultHidden: true },
+  { id: "light", label: "灯光", description: "大灯、示宽灯、日行灯", defaultHidden: true },
+  { id: "key", label: "钥匙", description: "近车解锁、门把手感应", defaultHidden: true },
+  { id: "special", label: "特殊状态", description: "维修等特殊标记", defaultHidden: true },
+  { id: "trip_share", label: "行程分享", description: "行程分享状态", defaultHidden: true },
+  { id: "nearby_car", label: "近车控制", description: "近车授权与登录", defaultHidden: true },
+  { id: "power_swap_order", label: "换电订单", description: "换电订单展示", defaultHidden: true },
+  { id: "lv_batt", label: "低压电瓶", description: "12V 电瓶状态", defaultHidden: true },
+  { id: "device", label: "设备状态", description: "车载设备在线状态", defaultHidden: true },
+  { id: "charge_order", label: "充电订单", description: "当前充电订单", defaultHidden: true },
+  { id: "remote_operate", label: "远程操作", description: "远程操作状态", defaultHidden: true },
+  { id: "offcar_power_swap", label: "离车换电", description: "离车换电状态", defaultHidden: true },
+  { id: "box", label: "储物箱", description: "前后备箱/储物", defaultHidden: true },
+  { id: "frdg", label: "冰箱", description: "车载冰箱", defaultHidden: true },
 ];
 
 export const ORDER_CARDS: CardDef[] = [
-  { id: "order_overview", label: "订单概览", description: "总数与分类" },
-  { id: "swap_stats", label: "换电统计", description: "花费与完成次数" },
-  { id: "top_stations", label: "常用换电站", description: "Top 换电站" },
+  { id: "order_overview", label: "订单概览", description: "总数与分类", defaultHidden: true },
+  { id: "swap_stats", label: "换电统计", description: "花费与完成次数", defaultHidden: true },
+  { id: "top_stations", label: "常用换电站", description: "Top 换电站", defaultHidden: true },
 ];
 
 function defaultLayout(defs: CardDef[]): CardLayoutState {
-  return { order: defs.map((d) => d.id), hidden: [] };
+  return {
+    order: defs.map((d) => d.id),
+    hidden: defs.filter((d) => d.defaultHidden).map((d) => d.id),
+    version: LAYOUT_VERSION,
+  };
 }
 
 const REMOVED_CARD_IDS = new Set(["doors_toggle", "order_table"]);
@@ -68,7 +78,7 @@ function normalizeCardId(id: string): string[] {
   return [id];
 }
 
-function mergeLayout(defs: CardDef[], saved: Partial<CardLayoutState> | null): CardLayoutState {
+export function mergeLayout(defs: CardDef[], saved: Partial<CardLayoutState> | null): CardLayoutState {
   const defaults = defaultLayout(defs);
   if (!saved) return defaults;
 
@@ -99,7 +109,19 @@ function mergeLayout(defs: CardDef[], saved: Partial<CardLayoutState> | null): C
         .filter((id) => validIds.has(id) && order.includes(id)),
     ),
   ];
-  return { order, hidden };
+  // 老布局（无 version）一次性把次要卡片收进「卡片管理」，用户之后仍可自己打开
+  if (saved.version !== LAYOUT_VERSION) {
+    for (const def of defs) {
+      if (def.defaultHidden && !hidden.includes(def.id)) hidden.push(def.id);
+    }
+  } else {
+    // 新加进来的「默认隐藏」卡片保持隐藏，除非用户把它排进过 order
+    const explicit = new Set((saved.order ?? []).flatMap(normalizeCardId));
+    for (const def of defs) {
+      if (def.defaultHidden && !explicit.has(def.id) && !hidden.includes(def.id)) hidden.push(def.id);
+    }
+  }
+  return { order, hidden, version: LAYOUT_VERSION };
 }
 
 function readFromLocalStorage(): Partial<Record<CardSection, CardLayoutState>> {

@@ -1,6 +1,8 @@
 import fs from "node:fs";
 import path from "node:path";
 import { getCardLayoutFile } from "./card-layout-api.js";
+import { listBackups } from "./backup-api.js";
+import { summarizeStorage, type StorageKind, type StorageSummary } from "./storage-summary.js";
 import { getEnvFilePath } from "./env-file.js";
 import {
   getChangeFile,
@@ -15,7 +17,7 @@ import {
   getVehicleMetaFile,
 } from "./paths.js";
 
-export type StorageFileKind = "config" | "data";
+export type StorageFileKind = StorageKind;
 
 export interface StorageFileDef {
   id: string;
@@ -35,7 +37,9 @@ export interface StorageFilesSnapshot {
   dataDir: string;
   userDataDir: string;
   envFile: string;
+  backupDir: string;
   files: StorageFileEntry[];
+  summary: StorageSummary;
 }
 
 function statEntry(filePath: string): Pick<StorageFileEntry, "exists" | "sizeBytes" | "modifiedAt"> {
@@ -79,12 +83,41 @@ function knownStorageFiles(dataDir: string, envFile: string, userDataDir: string
   return defs.filter((entry, index, list) => list.findIndex((x) => x.path === entry.path) === index);
 }
 
+/** 轨迹月文件与索引单独归类，便于看每月占用。 */
+function trackFiles(dataDir: string): StorageFileDef[] {
+  if (!fs.existsSync(dataDir)) return [];
+  return fs
+    .readdirSync(dataDir)
+    .filter((name) => /^tracks-(\d{4})-(\d{2})\.json$/.test(name) || name === "tracks-index.json")
+    .sort()
+    .map((name) => {
+      const match = /^tracks-(\d{4})-(\d{2})\.json$/.exec(name);
+      return {
+        id: name,
+        label: match ? `轨迹 ${match[1]}-${match[2]}` : "轨迹索引",
+        path: path.join(dataDir, name),
+        kind: "tracks" as const,
+      };
+    });
+}
+
+function readDisk(dataDir: string): { freeBytes: number; totalBytes: number } {
+  try {
+    const stat = fs.statfsSync(dataDir);
+    return { freeBytes: stat.bavail * stat.bsize, totalBytes: stat.blocks * stat.bsize };
+  } catch {
+    return { freeBytes: 0, totalBytes: 0 };
+  }
+}
+
 function extraDataFiles(dataDir: string, known: StorageFileDef[]): StorageFileDef[] {
   const knownPaths = new Set(known.map((f) => path.resolve(f.path)));
   if (!fs.existsSync(dataDir)) return [];
   return fs
     .readdirSync(dataDir)
     .filter((name) => name.endsWith(".json"))
+    // 轨迹文件单独归类，避免在「数据」里重复统计
+    .filter((name) => !/^tracks-\d{4}-\d{2}\.json$/.test(name) && name !== "tracks-index.json")
     .map((name) => path.join(dataDir, name))
     .filter((filePath) => !knownPaths.has(path.resolve(filePath)))
     .map((filePath) => ({
@@ -100,15 +133,25 @@ export function getStorageFilesSnapshot(dataDir: string, envFile?: string): Stor
   const userDataDir = path.dirname(dataDir);
   const known = knownStorageFiles(dataDir, resolvedEnv, userDataDir);
   const extras = extraDataFiles(dataDir, known);
-  const files = [...known, ...extras].map((def) => ({
+  const tracks = trackFiles(dataDir);
+  const files = [...known, ...extras, ...tracks].map((def) => ({
     ...def,
     ...statEntry(def.path),
   }));
+  const backupDir = process.env.NIO_BACKUP_DIR || "/workspace/nio-backup";
+  let backups: Array<{ size: number }> = [];
+  try {
+    backups = listBackups(backupDir).map((entry) => ({ size: entry.size }));
+  } catch {
+    backups = [];
+  }
   return {
     ok: true,
     dataDir,
     userDataDir,
     envFile: resolvedEnv,
+    backupDir,
     files,
+    summary: summarizeStorage({ files, backups, disk: readDisk(dataDir) }),
   };
 }
